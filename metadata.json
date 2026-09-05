@@ -1,0 +1,6 @@
+{
+  "name": "Map Heightmap & 3D GLTF Generator",
+  "description": "Convert Google Maps and terrain areas into high-precision heightmap PNGs, splat and mask map PNGs, and 3D glTF (.glb) terrain models.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
