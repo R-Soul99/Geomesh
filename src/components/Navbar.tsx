@@ -1,24 +1,20 @@
 import React from "react";
-import { Mountain, Layers, Box, Key, Compass, Download } from "lucide-react";
-import { PRESETS } from "../utils/presets";
-import { TerrainPreset } from "../types";
+import { Mountain, Layers, Box, Key, Compass, Download, ExternalLink, Navigation, Building2 } from "lucide-react";
 
 interface NavbarProps {
-  selectedPreset: string;
-  onSelectPreset: (preset: TerrainPreset) => void;
   hasGoogleKey: boolean;
   onOpenKeyModal: () => void;
-  activeTab: "map" | "heightmap" | "splatmap" | "3d";
-  setActiveTab: (tab: "map" | "heightmap" | "splatmap" | "3d") => void;
+  activeTab: "map" | "heightmap" | "splatmap" | "roads" | "buildings" | "3d";
+  setActiveTab: (tab: "map" | "heightmap" | "splatmap" | "roads" | "buildings" | "3d") => void;
   isGenerating: boolean;
   hasData: boolean;
   onQuickExportGlb: () => void;
   onQuickExportPng: () => void;
+  elevationActive?: boolean;
+  sourceUsed?: string;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
-  selectedPreset,
-  onSelectPreset,
   hasGoogleKey,
   onOpenKeyModal,
   activeTab,
@@ -27,6 +23,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   hasData,
   onQuickExportGlb,
   onQuickExportPng,
+  elevationActive = false,
+  sourceUsed,
 }) => {
   return (
     <header className="bg-[#0B0C10] border-b border-[#1F2833] text-[#C5C6C7] sticky top-0 z-40 shrink-0">
@@ -53,46 +51,43 @@ export const Navbar: React.FC<NavbarProps> = ({
             </div>
           </div>
 
-          {/* Preset Selector & API status */}
+          {/* API status & Standalone */}
           <div className="flex items-center gap-2 sm:gap-3">
-            <div className="relative">
-              <select
-                id="preset-selector"
-                value={selectedPreset}
-                onChange={(e) => {
-                  const p = PRESETS.find((item) => item.id === e.target.value);
-                  if (p) onSelectPreset(p);
-                }}
-                className="bg-[#1F2833] border border-[#45A29E]/30 text-xs font-mono text-white rounded px-2.5 py-1.5 pr-8 focus:outline-none focus:ring-1 focus:ring-[#66FCF1] appearance-none cursor-pointer"
-              >
-                <option value="" disabled>
-                  SELECT TARGET REGION...
-                </option>
-                {PRESETS.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name} [{p.region}]
-                  </option>
-                ))}
-              </select>
-              <Compass className="w-3.5 h-3.5 text-[#45A29E] absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-            </div>
-
             {/* Google Maps API Status */}
             <button
               id="btn-api-key-modal"
               onClick={onOpenKeyModal}
               className={`flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded border font-mono transition-colors ${
-                hasGoogleKey
+                elevationActive
                   ? "bg-[#1F2833] border-[#45A29E]/60 text-[#66FCF1] hover:border-[#66FCF1]"
+                  : hasGoogleKey
+                  ? "bg-[#1F2833]/80 border-[#45A29E]/40 text-[#66FCF1] hover:border-[#66FCF1]"
                   : "bg-[#111418] border-[#1F2833] text-[#C5C6C7] hover:border-[#45A29E]/40"
               }`}
-              title="Google Maps Platform API Status &amp; Demo Key configuration"
+              title="Elevation Engine &amp; API Configuration"
             >
               <Key className="w-3.5 h-3.5 text-[#45A29E]" />
               <span className="hidden md:inline text-[11px]">
-                {hasGoogleKey ? "API: CONNECTED" : "API: DEM_FALLBACK"}
+                {elevationActive
+                  ? "DEM: GOOGLE_ELEVATION"
+                  : sourceUsed === "terrarium" || !sourceUsed
+                  ? "DEM: TERRARIUM_30M"
+                  : `DEM: ${sourceUsed.toUpperCase()}`}
               </span>
             </button>
+
+            {/* Open in Standalone Tab button */}
+            <a
+              id="btn-open-standalone"
+              href={typeof window !== "undefined" ? window.location.href : "#"}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hidden sm:flex items-center gap-1 text-xs px-2.5 py-1.5 rounded border border-[#1F2833] bg-[#111418] hover:border-[#45A29E]/50 text-[#C5C6C7] hover:text-[#66FCF1] font-mono transition"
+              title="Open app in a full browser window (unlocks GPS access &amp; full WebGL canvas)"
+            >
+              <ExternalLink className="w-3.5 h-3.5 text-[#45A29E]" />
+              <span className="text-[11px]">STANDALONE</span>
+            </a>
           </div>
 
           {/* Quick Export actions */}
@@ -159,6 +154,32 @@ export const Navbar: React.FC<NavbarProps> = ({
             03_SPLAT_MASK &bull; RGBA
           </button>
           <button
+            id="tab-roads"
+            onClick={() => setActiveTab("roads")}
+            disabled={!hasData && !isGenerating}
+            className={`flex items-center gap-2 px-4 py-2.5 border-b-2 transition-colors shrink-0 ${
+              activeTab === "roads"
+                ? "border-[#66FCF1] text-[#66FCF1] bg-[#1F2833]/60 font-semibold"
+                : "border-transparent text-[#C5C6C7]/60 hover:text-white hover:border-[#1F2833]"
+            } ${!hasData && !isGenerating ? "opacity-40 cursor-not-allowed" : ""}`}
+          >
+            <Navigation className="w-3.5 h-3.5 text-[#45A29E]" />
+            04_ROAD_NETWORK &bull; MASK
+          </button>
+          <button
+            id="tab-buildings"
+            onClick={() => setActiveTab("buildings")}
+            disabled={!hasData && !isGenerating}
+            className={`flex items-center gap-2 px-4 py-2.5 border-b-2 transition-colors shrink-0 ${
+              activeTab === "buildings"
+                ? "border-[#66FCF1] text-[#66FCF1] bg-[#1F2833]/60 font-semibold"
+                : "border-transparent text-[#C5C6C7]/60 hover:text-white hover:border-[#1F2833]"
+            } ${!hasData && !isGenerating ? "opacity-40 cursor-not-allowed" : ""}`}
+          >
+            <Building2 className="w-3.5 h-3.5 text-[#45A29E]" />
+            05_STRUCTURES &bull; BUILDINGS
+          </button>
+          <button
             id="tab-3d"
             onClick={() => setActiveTab("3d")}
             disabled={!hasData && !isGenerating}
@@ -169,7 +190,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             } ${!hasData && !isGenerating ? "opacity-40 cursor-not-allowed" : ""}`}
           >
             <Box className="w-3.5 h-3.5 text-[#45A29E]" />
-            04_3D_MESH &bull; GLTF (.GLB)
+            06_3D_MESH &bull; GLTF (.GLB)
           </button>
         </div>
       </div>

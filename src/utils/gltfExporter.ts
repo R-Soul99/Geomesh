@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
-import { ModelExportSettings } from "../types";
+import { ModelExportSettings, BuildingStructure, BoundingBox } from "../types";
 
 export interface TerrainMeshResult {
   mesh: THREE.Mesh;
@@ -21,19 +21,34 @@ export function createTerrainMesh(
   minElev: number,
   maxElev: number,
   textureCanvas: HTMLCanvasElement | null,
-  settings: ModelExportSettings
+  settings: ModelExportSettings,
+  realWidthMeters: number = 10000,
+  realHeightMeters?: number
 ): TerrainMeshResult {
   const elevRange = Math.max(1, maxElev - minElev);
   const targetScale = 100; // 100 units wide in 3D viewport
-  const heightScale = (targetScale / 1000) * settings.verticalExaggeration;
+  const actualHeightM = realHeightMeters && realHeightMeters > 10 ? realHeightMeters : realWidthMeters;
+  const aspect = actualHeightM / Math.max(10, realWidthMeters);
+
+  // Proportionally scale 3D plane dimensions
+  let planeWidth = targetScale;
+  let planeHeight = targetScale * aspect;
+  if (aspect > 1) {
+    planeHeight = targetScale;
+    planeWidth = targetScale / aspect;
+  }
+
+  const spanMeters = aspect > 1 ? actualHeightM : realWidthMeters;
+  const trueScaleUnitPerMeter = targetScale / (spanMeters > 50 ? spanMeters : 10000);
+  const heightScale = trueScaleUnitPerMeter * settings.verticalExaggeration;
 
   const widthSegments = gridWidth - 1;
   const heightSegments = gridHeight - 1;
 
-  // Plane geometry
+  // Plane geometry with true aspect ratio
   const planeGeo = new THREE.PlaneGeometry(
-    targetScale,
-    targetScale,
+    planeWidth,
+    planeHeight,
     widthSegments,
     heightSegments
   );
@@ -56,7 +71,8 @@ export function createTerrainMesh(
 
   // Add terrain skirt (solid base block) if requested
   if (settings.includeSkirt) {
-    const skirtBaseY = -10 * (targetScale / 1000) * settings.verticalExaggeration;
+    const skirtDepthMeters = Math.max(15, elevRange * 0.15);
+    const skirtBaseY = -skirtDepthMeters * heightScale;
     finalGeometry = addTerrainSkirt(planeGeo, gridWidth, gridHeight, skirtBaseY);
   }
 
@@ -198,13 +214,176 @@ function addTerrainSkirt(
 }
 
 /**
- * Exports Three.js mesh/scene as binary glTF (.glb)
+ * Creates 3D Building Meshes placed directly on top of the terrain surface
  */
-export function exportToGlb(mesh: THREE.Mesh): Promise<Blob> {
+export function createBuildingMeshesGroup(
+  buildings: BuildingStructure[],
+  bbox: BoundingBox,
+  elevations: number[],
+  gridWidth: number,
+  gridHeight: number,
+  minElev: number,
+  maxElev: number,
+  settings: ModelExportSettings,
+  realWidthMeters: number = 10000,
+  realHeightMeters?: number
+): THREE.Group {
+  const group = new THREE.Group();
+  group.name = "Buildings_And_Structures";
+
+  if (!buildings || buildings.length === 0) return group;
+
+  const targetScale = 100;
+  const actualHeightM = realHeightMeters && realHeightMeters > 10 ? realHeightMeters : realWidthMeters;
+  const aspect = actualHeightM / Math.max(10, realWidthMeters);
+
+  let planeWidth = targetScale;
+  let planeHeight = targetScale * aspect;
+  if (aspect > 1) {
+    planeHeight = targetScale;
+    planeWidth = targetScale / aspect;
+  }
+
+  const spanMeters = aspect > 1 ? actualHeightM : realWidthMeters;
+  const trueScaleUnitPerMeter = targetScale / (spanMeters > 50 ? spanMeters : 10000);
+  const heightScale = trueScaleUnitPerMeter * settings.verticalExaggeration;
+
+  const bHeightMult = settings.buildingHeightScale || 1.0;
+  const bStyle = settings.buildingStyle || "realistic";
+
+  const spanLng = bbox.east - bbox.west;
+  const spanLat = bbox.north - bbox.south;
+  if (spanLng <= 0 || spanLat <= 0) return group;
+
+  // Materials for different archetypes
+  const matRealisticWall = new THREE.MeshStandardMaterial({
+    color: 0xdedede,
+    roughness: 0.8,
+    metalness: 0.1,
+  });
+  const matFuel = new THREE.MeshStandardMaterial({
+    color: 0x10b981,
+    roughness: 0.4,
+    metalness: 0.2,
+    emissive: 0x054d32,
+    emissiveIntensity: 0.25,
+  });
+  const matCommercial = new THREE.MeshStandardMaterial({
+    color: 0x06b6d4,
+    roughness: 0.5,
+    metalness: 0.2,
+  });
+  const matIndustrial = new THREE.MeshStandardMaterial({
+    color: 0x64748b,
+    roughness: 0.7,
+    metalness: 0.3,
+  });
+  const matCivic = new THREE.MeshStandardMaterial({
+    color: 0xa855f7,
+    roughness: 0.6,
+    metalness: 0.2,
+  });
+  const matGreybox = new THREE.MeshStandardMaterial({
+    color: 0xe2e8f0,
+    roughness: 0.5,
+    metalness: 0.1,
+  });
+  const matBlueprint = new THREE.MeshStandardMaterial({
+    color: 0x66fcf1,
+    roughness: 0.3,
+    metalness: 0.3,
+    emissive: 0x1f4e4b,
+    emissiveIntensity: 0.4,
+  });
+
+  // Limit rendering to first 1200 buildings if scene is dense
+  const buildingsToRender = buildings.slice(0, 1500);
+
+  for (const b of buildingsToRender) {
+    const u = (b.centroid.lng - bbox.west) / spanLng;
+    const v = (bbox.north - b.centroid.lat) / spanLat;
+
+    // Skip if out of bounds
+    if (u < 0 || u > 1 || v < 0 || v > 1) continue;
+
+    // Convert to local 3D X/Z
+    const localX = (u - 0.5) * planeWidth;
+    const localZ = (v - 0.5) * planeHeight;
+
+    // Bilinear ground elevation
+    const xGrid = u * (gridWidth - 1);
+    const yGrid = v * (gridHeight - 1);
+    const x0 = Math.floor(xGrid);
+    const x1 = Math.min(gridWidth - 1, x0 + 1);
+    const y0 = Math.floor(yGrid);
+    const y1 = Math.min(gridHeight - 1, y0 + 1);
+    const tx = xGrid - x0;
+    const ty = yGrid - y0;
+
+    const e00 = elevations[y0 * gridWidth + x0] !== undefined ? elevations[y0 * gridWidth + x0] : minElev;
+    const e10 = elevations[y0 * gridWidth + x1] !== undefined ? elevations[y0 * gridWidth + x1] : minElev;
+    const e01 = elevations[y1 * gridWidth + x0] !== undefined ? elevations[y1 * gridWidth + x0] : minElev;
+    const e11 = elevations[y1 * gridWidth + x1] !== undefined ? elevations[y1 * gridWidth + x1] : minElev;
+
+    const groundElev = (1 - tx) * (1 - ty) * e00 + tx * (1 - ty) * e10 + (1 - tx) * ty * e01 + tx * ty * e11;
+    const groundY = (groundElev - minElev) * heightScale;
+
+    // 3D Dimensions
+    const bHeight3D = Math.max(0.15, b.heightMeters * heightScale * bHeightMult);
+    const bWidth3D = Math.max(0.25, (b.widthMeters / realWidthMeters) * planeWidth);
+    const bDepth3D = Math.max(0.25, (b.depthMeters / actualHeightM) * planeHeight);
+
+    const geo = new THREE.BoxGeometry(bWidth3D, bHeight3D, bDepth3D);
+
+    // Material selection
+    let mat = matRealisticWall;
+    if (bStyle === "greybox") {
+      mat = matGreybox;
+    } else if (bStyle === "blueprint") {
+      mat = matBlueprint;
+    } else if (bStyle === "category") {
+      if (b.type === "fuel") mat = matFuel;
+      else if (b.type === "commercial") mat = matCommercial;
+      else if (b.type === "industrial") mat = matIndustrial;
+      else if (b.type === "civic" || b.type === "structure") mat = matCivic;
+      else mat = matRealisticWall;
+    } else {
+      // Realistic
+      if (b.type === "fuel") mat = matFuel;
+      else if (b.type === "commercial") mat = matCommercial;
+      else if (b.type === "industrial") mat = matIndustrial;
+      else if (b.type === "civic") mat = matCivic;
+      else mat = matRealisticWall;
+    }
+
+    const bMesh = new THREE.Mesh(geo, mat);
+    bMesh.name = `Building_${b.type}_${b.id}`;
+    bMesh.position.set(localX, groundY + bHeight3D / 2, localZ);
+    bMesh.castShadow = true;
+    bMesh.receiveShadow = true;
+
+    // Highlight Fuel Stations with distinct canopy structure
+    if (b.type === "fuel") {
+      const canopyGeo = new THREE.BoxGeometry(bWidth3D * 1.25, 0.08 * heightScale * bHeightMult, bDepth3D * 1.25);
+      const canopyMesh = new THREE.Mesh(canopyGeo, matFuel);
+      canopyMesh.position.set(localX, groundY + bHeight3D + 0.04, localZ);
+      group.add(canopyMesh);
+    }
+
+    group.add(bMesh);
+  }
+
+  return group;
+}
+
+/**
+ * Exports Three.js mesh/scene/group as binary glTF (.glb)
+ */
+export function exportToGlb(objectOrMesh: THREE.Object3D): Promise<Blob> {
   return new Promise((resolve, reject) => {
     const exporter = new GLTFExporter();
     const scene = new THREE.Scene();
-    scene.add(mesh.clone());
+    scene.add(objectOrMesh.clone());
 
     exporter.parse(
       scene,

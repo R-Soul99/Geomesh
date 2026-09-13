@@ -36,9 +36,13 @@ export const SplatmapViewer: React.FC<SplatmapViewerProps> = ({
 
   // Compute slopes across grid in degrees
   const slopeGrid = React.useMemo(() => {
-    const metersPerPixel = (areaKilometers * 1000) / data.resolution;
+    const midLat = ((data.bbox.north + data.bbox.south) / 2) * (Math.PI / 180);
+    const wMeters = Math.max(100, Math.abs(data.bbox.east - data.bbox.west) * 111320 * Math.cos(midLat));
+    const hMeters = Math.max(100, Math.abs(data.bbox.north - data.bbox.south) * 111320);
+    const avgMeters = (wMeters + hMeters) / 2;
+    const metersPerPixel = avgMeters / data.resolution;
     return calculateSlopeGrid(data.elevations, data.resolution, data.resolution, metersPerPixel);
-  }, [data.elevations, data.resolution, areaKilometers]);
+  }, [data.elevations, data.resolution, data.bbox]);
 
   // Compute splat channels
   const channels = React.useMemo(() => {

@@ -3,6 +3,8 @@ import { Navbar } from "./components/Navbar";
 import { MapSelector } from "./components/MapSelector";
 import { HeightmapViewer } from "./components/HeightmapViewer";
 import { SplatmapViewer } from "./components/SplatmapViewer";
+import { RoadLayoutViewer } from "./components/RoadLayoutViewer";
+import { BuildingsLayoutViewer } from "./components/BuildingsLayoutViewer";
 import { Terrain3DViewer } from "./components/Terrain3DViewer";
 import { StreetViewModal } from "./components/StreetViewModal";
 import { ApiKeyModal } from "./components/ApiKeyModal";
@@ -11,28 +13,46 @@ import {
   Coordinates,
   ElevationGridData,
   HeightmapSettings,
+  RoadNetworkData,
+  BuildingNetworkData,
   SplatSettings,
-  TerrainPreset,
 } from "./types";
-import { PRESETS } from "./utils/presets";
 import { calculateSlopeGrid, encode16BitGrayscalePng } from "./utils/pngEncoder";
 import { generateSplatMap, imageDataToPngBlob } from "./utils/splatGenerator";
 import { createTerrainMesh, exportToGlb } from "./utils/gltfExporter";
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<"map" | "heightmap" | "splatmap" | "3d">("map");
-  const [selectedPresetId, setSelectedPresetId] = useState<string>("fuji");
+  const [activeTab, setActiveTab] = useState<
+    "map" | "heightmap" | "splatmap" | "roads" | "buildings" | "3d"
+  >("map");
 
   // Geographic bounds state
-  const defaultPreset = PRESETS[0]; // Mount Fuji
-  const [bbox, setBbox] = useState<BoundingBox>(defaultPreset.bbox);
-  const [center, setCenter] = useState<Coordinates>(defaultPreset.center);
-  const [areaKilometers, setAreaKilometers] = useState<number>(10);
+  const [bbox, setBbox] = useState<BoundingBox>({
+    north: 50.72,
+    south: 50.68,
+    east: -3.5,
+    west: -3.55,
+  });
+  const [center, setCenter] = useState<Coordinates>({
+    lat: 50.7,
+    lng: -3.525,
+  });
+  const [areaKilometers, setAreaKilometers] = useState<number>(5);
 
   // Elevation data
   const [elevationData, setElevationData] = useState<ElevationGridData | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Road Network Data
+  const [roadData, setRoadData] = useState<RoadNetworkData | null>(null);
+  const [isLoadingRoads, setIsLoadingRoads] = useState(false);
+  const roadCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  // Buildings & Structures Network Data
+  const [buildingData, setBuildingData] = useState<BuildingNetworkData | null>(null);
+  const [isLoadingBuildings, setIsLoadingBuildings] = useState(false);
+  const buildingCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   // Heightmap & Splat settings
   const [heightmapSettings, setHeightmapSettings] = useState<HeightmapSettings>({
@@ -61,7 +81,27 @@ export default function App() {
   const [isStreetViewOpen, setIsStreetViewOpen] = useState(false);
   const [isKeyModalOpen, setIsKeyModalOpen] = useState(false);
   const [hasGoogleKey, setHasGoogleKey] = useState(false);
-  const [clientKey, setClientKey] = useState("");
+  const [elevationActive, setElevationActive] = useState(false);
+  const [elevationErrorMessage, setElevationErrorMessage] = useState<string | null>(null);
+  const [elevationSource, setElevationSource] = useState<"auto" | "terrarium" | "google" | "open-meteo">("auto");
+  const [clientKey, setClientKey] = useState<string>(() => {
+    try {
+      return localStorage.getItem("gmp_client_key") || "";
+    } catch {
+      return "";
+    }
+  });
+
+  // Persist clientKey
+  useEffect(() => {
+    try {
+      if (clientKey) {
+        localStorage.setItem("gmp_client_key", clientKey);
+      } else {
+        localStorage.removeItem("gmp_client_key");
+      }
+    } catch {}
+  }, [clientKey]);
 
   // Check config on mount
   useEffect(() => {
@@ -71,9 +111,57 @@ export default function App() {
         if (data.hasGoogleKey) {
           setHasGoogleKey(true);
         }
+        if (data.elevationActive) {
+          setElevationActive(true);
+        }
+        if (data.elevationErrorMessage) {
+          setElevationErrorMessage(data.elevationErrorMessage);
+        }
       })
-      .catch((err) => console.warn("Config check error:", err));
+      .catch((err) => console.log("[Config] Notice:", err));
   }, []);
+
+  // Fetch real-world road vectors from OpenStreetMap
+  const fetchRoadNetwork = async (targetBbox: BoundingBox) => {
+    setIsLoadingRoads(true);
+    try {
+      const res = await fetch("/api/roads/network", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bbox: targetBbox }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      if (json && json.success) {
+        setRoadData(json);
+      }
+    } catch (err: any) {
+      console.warn("Road network fetch warning:", err.message);
+    } finally {
+      setIsLoadingRoads(false);
+    }
+  };
+
+  // Fetch real-world building footprints and structures from Overpass API
+  const fetchBuildingStructures = async (targetBbox: BoundingBox) => {
+    setIsLoadingBuildings(true);
+    try {
+      const res = await fetch("/api/buildings/structures", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bbox: targetBbox }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      if (json && json.success) {
+        setBuildingData(json);
+      }
+    } catch (err: any) {
+      console.warn("Building structures fetch warning:", err.message);
+    } finally {
+      setIsLoadingBuildings(false);
+    }
+  };
 
   // Fetch Elevation Grid from backend
   const fetchElevationGrid = async (targetBbox: BoundingBox, resolution: number = 64) => {
@@ -88,6 +176,7 @@ export default function App() {
           bbox: targetBbox,
           resolution,
           clientKey: clientKey || undefined,
+          forceSource: elevationSource !== "auto" ? elevationSource : undefined,
         }),
       });
 
@@ -108,9 +197,14 @@ export default function App() {
         bbox: json.bbox,
         sourceUsed: json.sourceUsed,
         elevations: json.elevations,
+        elevationNotice: json.elevationNotice,
       };
 
       setElevationData(gridData);
+
+      // Precompute road network and buildings in parallel
+      fetchRoadNetwork(targetBbox);
+      fetchBuildingStructures(targetBbox);
 
       // Precompute splat canvas for 3D viewer
       const metersPerPixel = (areaKilometers * 1000) / gridData.resolution;
@@ -146,11 +240,6 @@ export default function App() {
     }
   };
 
-  // Initial load: generate Mount Fuji default
-  useEffect(() => {
-    fetchElevationGrid(defaultPreset.bbox, 64);
-  }, []);
-
   // Update splat canvas whenever splatSettings change
   useEffect(() => {
     if (!elevationData) return;
@@ -181,14 +270,6 @@ export default function App() {
     }
   }, [splatSettings, elevationData, areaKilometers]);
 
-  // Handle preset selection
-  const handleSelectPreset = (preset: TerrainPreset) => {
-    setSelectedPresetId(preset.id);
-    setBbox(preset.bbox);
-    setCenter(preset.center);
-    fetchElevationGrid(preset.bbox, 64);
-  };
-
   // Quick export 16-bit PNG
   const handleQuickExportPng = async () => {
     if (!elevationData) return;
@@ -215,6 +296,15 @@ export default function App() {
   const handleQuickExportGlb = async () => {
     if (!elevationData) return;
     try {
+      const midLat = ((elevationData.bbox.north + elevationData.bbox.south) / 2) * (Math.PI / 180);
+      const realWidthMeters = Math.max(
+        100,
+        Math.abs(elevationData.bbox.east - elevationData.bbox.west) * 111320 * Math.cos(midLat)
+      );
+      const realHeightMeters = Math.max(
+        100,
+        Math.abs(elevationData.bbox.north - elevationData.bbox.south) * 111320
+      );
       const meshRes = createTerrainMesh(
         elevationData.elevations,
         elevationData.resolution,
@@ -223,18 +313,22 @@ export default function App() {
         elevationData.maxElevation,
         splatCanvas,
         {
-          verticalExaggeration: 1.5,
+          verticalExaggeration: 1.0, // 1:1 True Scale
           includeSkirt: true,
           skirtDepth: 50,
           materialMode: "splat",
           meshDensity: elevationData.resolution,
-        }
+        },
+        realWidthMeters,
+        realHeightMeters
       );
       const blob = await exportToGlb(meshRes.mesh);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `terrain_${areaKilometers}km_${elevationData.resolution}x${elevationData.resolution}.glb`;
+      const wKm = (realWidthMeters / 1000).toFixed(1);
+      const hKm = (realHeightMeters / 1000).toFixed(1);
+      a.download = `terrain_1to1_${wKm}x${hKm}km_${elevationData.resolution}x${elevationData.resolution}.glb`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (e: any) {
@@ -246,8 +340,6 @@ export default function App() {
     <div className="min-h-screen bg-[#0B0C10] text-[#C5C6C7] flex flex-col font-sans selection:bg-[#45A29E] selection:text-[#0B0C10]">
       {/* Top Navigation */}
       <Navbar
-        selectedPreset={selectedPresetId}
-        onSelectPreset={handleSelectPreset}
         hasGoogleKey={hasGoogleKey || Boolean(clientKey)}
         onOpenKeyModal={() => setIsKeyModalOpen(true)}
         activeTab={activeTab}
@@ -256,6 +348,8 @@ export default function App() {
         hasData={Boolean(elevationData)}
         onQuickExportGlb={handleQuickExportGlb}
         onQuickExportPng={handleQuickExportPng}
+        elevationActive={elevationActive}
+        sourceUsed={elevationData?.sourceUsed}
       />
 
       {/* Main Workspace Container */}
@@ -290,12 +384,17 @@ export default function App() {
               });
             }}
             isGenerating={isGenerating}
-            selectedPreset={selectedPresetId}
-            onSelectPreset={handleSelectPreset}
             hasGoogleKey={hasGoogleKey || Boolean(clientKey)}
+            clientKey={clientKey}
             onOpenStreetView={() => setIsStreetViewOpen(true)}
             areaKilometers={areaKilometers}
             setAreaKilometers={setAreaKilometers}
+            elevationSource={elevationSource}
+            setElevationSource={setElevationSource}
+            elevationActive={elevationActive}
+            elevationNotice={elevationData?.elevationNotice}
+            sourceUsed={elevationData?.sourceUsed}
+            onOpenKeyModal={() => setIsKeyModalOpen(true)}
           />
         )}
 
@@ -315,16 +414,45 @@ export default function App() {
             data={elevationData}
             settings={splatSettings}
             onChangeSettings={setSplatSettings}
-            onProceedTo3D={() => setActiveTab("3d")}
+            onProceedTo3D={() => setActiveTab("roads")}
             areaKilometers={areaKilometers}
           />
         )}
 
-        {/* Tab 4: 3D glTF Mesh & WebGL Viewport */}
+        {/* Tab 4: Road Network Vectors & Alpha Mask Viewer */}
+        {activeTab === "roads" && elevationData && (
+          <RoadLayoutViewer
+            data={elevationData}
+            areaKilometers={areaKilometers}
+            roadData={roadData}
+            isLoadingRoads={isLoadingRoads}
+            onRefreshRoads={() => fetchRoadNetwork(elevationData.bbox)}
+            onProceedTo3D={() => setActiveTab("buildings")}
+            roadCanvasRefOut={roadCanvasRef}
+          />
+        )}
+
+        {/* Tab 5: Buildings & Real-World Structures */}
+        {activeTab === "buildings" && elevationData && (
+          <BuildingsLayoutViewer
+            data={elevationData}
+            areaKilometers={areaKilometers}
+            buildingData={buildingData}
+            isLoadingBuildings={isLoadingBuildings}
+            onRefreshBuildings={() => fetchBuildingStructures(elevationData.bbox)}
+            onProceedTo3D={() => setActiveTab("3d")}
+            buildingCanvasRefOut={buildingCanvasRef}
+          />
+        )}
+
+        {/* Tab 6: 3D glTF Mesh & WebGL Viewport */}
         {activeTab === "3d" && elevationData && (
           <Terrain3DViewer
             data={elevationData}
             splatCanvas={splatCanvas}
+            roadCanvas={roadCanvasRef.current}
+            roadData={roadData}
+            buildingData={buildingData}
             areaKilometers={areaKilometers}
           />
         )}
@@ -345,6 +473,15 @@ export default function App() {
         hasGoogleKey={hasGoogleKey}
         clientKey={clientKey}
         setClientKey={setClientKey}
+        elevationActive={elevationActive}
+        setElevationActive={setElevationActive}
+        elevationErrorMessage={elevationErrorMessage || undefined}
+        setElevationErrorMessage={setElevationErrorMessage}
+        onKeyVerified={(key, isElevActive) => {
+          if (isElevActive) {
+            setElevationSource("google");
+          }
+        }}
       />
 
       {/* Telemetry Status Bar & Footer */}

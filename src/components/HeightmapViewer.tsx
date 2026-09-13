@@ -249,7 +249,7 @@ export const HeightmapViewer: React.FC<HeightmapViewerProps> = ({
 
           {/* Data source attribution badge */}
           <div className="absolute bottom-4 left-4 px-2.5 py-1 bg-[#0B0C10]/85 border border-[#1F2833] rounded text-[10px] font-mono text-[#C5C6C7]/60">
-            SRC: {data.sourceUsed === "google" ? "GOOGLE_MAPS_ELEVATION_API" : "OPEN_DEM_TOPOGRAPHY"}
+            SRC: {data.sourceUsed === "google" ? "GOOGLE_MAPS_ELEVATION_API" : data.sourceUsed === "terrarium" ? "AWS_TERRARIUM_DEM_30M" : "GLOBAL_DEM_TOPOGRAPHY"}
           </div>
         </div>
 

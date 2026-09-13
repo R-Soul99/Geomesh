@@ -1,6 +1,10 @@
 {
   "name": "Map Heightmap & 3D GLTF Generator",
-  "description": "Convert Google Maps and terrain areas into high-precision heightmap PNGs, splat and mask map PNGs, and 3D glTF (.glb) terrain models.",
-  "requestFramePermissions": ["geolocation"],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "description": "Convert real-world locations into 16-bit heightmaps, RGBA splat maps, road networks, 3D buildings & structures, and true-scale 3D glTF/GLB models for game engines.",
+  "requestFramePermissions": [
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

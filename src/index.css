@@ -12,3 +12,38 @@
   background-image: radial-gradient(#45A29E 1px, transparent 1px);
   background-size: 20px 20px;
 }
+
+/* Dark mode styling for Leaflet controls and dark tile inversion for standard maps */
+.leaflet-container {
+  background: #0B0C10 !important;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+}
+
+.leaflet-bar {
+  border: 1px solid #1F2833 !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5) !important;
+  border-radius: 6px !important;
+  overflow: hidden;
+}
+
+.leaflet-bar a {
+  background-color: #111418 !important;
+  color: #66FCF1 !important;
+  border-bottom: 1px solid #1F2833 !important;
+}
+
+.leaflet-bar a:hover {
+  background-color: #1F2833 !important;
+  color: #FFFFFF !important;
+}
+
+.leaflet-control-attribution {
+  background: rgba(11, 12, 16, 0.85) !important;
+  color: #C5C6C7 !important;
+  font-size: 9px !important;
+  border-top-left-radius: 4px;
+}
+
+.leaflet-control-attribution a {
+  color: #45A29E !important;
+}
